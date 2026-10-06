@@ -79,7 +79,7 @@ function egyptDate(date = new Date()) {
 // =====================================================
 
 function daysBetween(date1, date2) {
-  const a = new Date(`${date1}T00:00:00+03:00`);
+ const a = new Date(date1 + "T00:00:00+03:00");
   const b = new Date(`${date2}T00:00:00+03:00`);
 
   return Math.floor((b - a) / 86400000);
