@@ -540,7 +540,7 @@ client.on("interactionCreate", async interaction => {
 
     if (player.presentToday) {
       return interaction.reply({
-        content: `⚠️ ${user} مسجل حضور بالفعل اليوم.`,
+      content: `⚠️ ${user} مسجل حضور بالفعل اليوم.`,
         ephemeral: true
       });
     }
