@@ -19,16 +19,29 @@ const client = new Client({
   ]
 });
 
-// =========================
-// إعدادات البوت
-// =========================
+// =====================================================
+// الإعدادات
+// =====================================================
 
-// حط ID روم الـ Warn هنا
-const WARN_CHANNEL_ID = "حط_ايدي_روم_الورن_هنا";
+const WARN_CHANNEL_ID = "1551005345382404147";
 
-// =========================
+// تحذيرات التاسكات
+const TASK_WARN_ROLES = [
+  "1551001629656883200",
+  "1551001910524256366",
+  "1551001972205813950"
+];
+
+// تحذيرات الغياب
+const ABSENCE_WARN_ROLES = [
+  "1550994651769475102",
+  "1550995580908605591",
+  "1550995666036330607"
+];
+
+// =====================================================
 // ملف البيانات
-// =========================
+// =====================================================
 
 const DATA_FILE = "./players.json";
 
@@ -48,29 +61,168 @@ function saveData(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-// =========================
+// =====================================================
 // التاريخ بتوقيت مصر
-// =========================
+// =====================================================
 
-function getEgyptDate() {
+function egyptDate(date = new Date()) {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Africa/Cairo",
     year: "numeric",
     month: "2-digit",
     day: "2-digit"
-  }).format(new Date());
+  }).format(date);
 }
 
-// =========================
-// أوامر البوت
-// =========================
+// =====================================================
+// فرق الأيام
+// =====================================================
+
+function daysBetween(date1, date2) {
+  const a = new Date(`${date1}T00:00:00+03:00`);
+  const b = new Date(`${date2}T00:00:00+03:00`);
+
+  return Math.floor((b - a) / 86400000);
+}
+
+// =====================================================
+// إنشاء بيانات عضو
+// =====================================================
+
+function ensurePlayer(data, user) {
+  if (!data[user.id]) {
+    data[user.id] = {
+      name: user.username,
+
+      attendance: [],
+      lastAttendance: null,
+      presentToday: false,
+
+      tasks: [],
+
+      taskWarns: 0,
+      absenceWarns: 0,
+
+      totalWarns: 0,
+
+      fines: [],
+      points: 0,
+
+      vacations: [],
+
+      lastAbsenceCheck: null
+    };
+  }
+
+  data[user.id].name = user.username;
+
+  return data[user.id];
+}
+
+// =====================================================
+// صلاحيات الإدارة
+// =====================================================
+
+function isAdmin(interaction) {
+  return interaction.member.permissions.has(
+    PermissionFlagsBits.ManageGuild
+  );
+}
+
+// =====================================================
+// إضافة Warn
+// =====================================================
+
+async function addWarn(guild, userId, type, reason) {
+  const data = loadData();
+
+  if (!data[userId]) {
+    data[userId] = {
+      name: "Unknown",
+      attendance: [],
+      lastAttendance: null,
+      presentToday: false,
+      tasks: [],
+      taskWarns: 0,
+      absenceWarns: 0,
+      totalWarns: 0,
+      fines: [],
+      points: 0,
+      vacations: [],
+      lastAbsenceCheck: null
+    };
+  }
+
+  const player = data[userId];
+
+  let warnNumber;
+  let roleIds;
+
+  if (type === "task") {
+    player.taskWarns++;
+    warnNumber = Math.min(player.taskWarns, 3);
+    roleIds = TASK_WARN_ROLES;
+  } else {
+    player.absenceWarns++;
+    warnNumber = Math.min(player.absenceWarns, 3);
+    roleIds = ABSENCE_WARN_ROLES;
+  }
+
+  player.totalWarns++;
+
+  saveData(data);
+
+  // إزالة رولات التحذير القديمة وإضافة الجديدة
+  try {
+    const member = await guild.members.fetch(userId);
+
+    for (const roleId of roleIds) {
+      if (member.roles.cache.has(roleId)) {
+        await member.roles.remove(roleId).catch(() => {});
+      }
+    }
+
+    const newRole = roleIds[warnNumber - 1];
+
+    if (newRole) {
+      await member.roles.add(newRole).catch(() => {});
+    }
+  } catch (error) {
+    console.log("⚠️ لم أستطع تعديل رتبة الـWarn:", error.message);
+  }
+
+  // إرسال التحذير للروم
+  try {
+    const channel = await guild.channels.fetch(WARN_CHANNEL_ID);
+
+    if (channel) {
+      const embed = new EmbedBuilder()
+        .setTitle("⚠️ تحذير جديد")
+        .setDescription(
+          `<@${userId}>\n\n` +
+          `📌 النوع: **${type === "task" ? "تاسك" : "غياب"}**\n` +
+          `🔢 التحذير: **${warnNumber}/3**\n` +
+          `📝 السبب: **${reason}**`
+        )
+        .setTimestamp();
+
+      await channel.send({
+        content: `<@${userId}>`,
+        embeds: [embed]
+      });
+    }
+  } catch (error) {
+    console.log("⚠️ لم أستطع إرسال الـWarn:", error.message);
+  }
+}
+
+// =====================================================
+// أوامر السلاش
+// =====================================================
 
 const commands = [
 
-  // =========================
   // الحضور
-  // =========================
-
   new SlashCommandBuilder()
     .setName("حضور")
     .setDescription("تسجيل حضور عضو")
@@ -80,10 +232,6 @@ const commands = [
         .setDescription("العضو")
         .setRequired(false)
     ),
-
-  // =========================
-  // الانصراف
-  // =========================
 
   new SlashCommandBuilder()
     .setName("انصراف")
@@ -95,28 +243,218 @@ const commands = [
         .setRequired(false)
     ),
 
-  // =========================
-  // حضوراتي
-  // =========================
-
   new SlashCommandBuilder()
     .setName("حضوراتي")
     .setDescription("عرض سجل حضورك"),
 
-  // =========================
-  // الغيابات
-  // =========================
-
   new SlashCommandBuilder()
     .setName("الغيابات")
-    .setDescription("عرض الأعضاء الغائبين")
+    .setDescription("عرض الغائبين")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  // التاسكات
+  new SlashCommandBuilder()
+    .setName("تاسك")
+    .setDescription("إضافة تاسك لعضو")
+    .addUserOption(option =>
+      option
+        .setName("العضو")
+        .setDescription("العضو المطلوب منه التاسك")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName("المهمة")
+        .setDescription("وصف التاسك")
+        .setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder()
+    .setName("تسليم")
+    .setDescription("تسليم تاسك")
+    .addIntegerOption(option =>
+      option
+        .setName("رقم")
+        .setDescription("رقم التاسك")
+        .setRequired(true)
+        .setMinValue(1)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("تاسكاتي")
+    .setDescription("عرض التاسكات الخاصة بك"),
+
+  new SlashCommandBuilder()
+    .setName("التاسكات")
+    .setDescription("عرض جميع التاسكات")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  // الغرامات
+  new SlashCommandBuilder()
+    .setName("غرامة")
+    .setDescription("إضافة غرامة لعضو")
+    .addUserOption(option =>
+      option
+        .setName("العضو")
+        .setDescription("العضو")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName("السبب")
+        .setDescription("سبب الغرامة")
+        .setRequired(true)
+        .addChoices(
+          {
+            name: "عدم انصياع للأوامر — 3000",
+            value: "عدم انصياع للأوامر"
+          },
+          {
+            name: "أشياء غير لائقة — 2500",
+            value: "أشياء غير لائقة"
+          },
+          {
+            name: "التأخير عن مهمة — 1000",
+            value: "التأخير عن مهمة"
+          },
+          {
+            name: "الغياب بدون إذن — 1500",
+            value: "الغياب بدون إذن"
+          },
+          {
+            name: "مخالفة قوانين العصابة — 2000",
+            value: "مخالفة قوانين العصابة"
+          }
+        )
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  new SlashCommandBuilder()
+    .setName("غراماتي")
+    .setDescription("عرض غراماتك"),
+
+  new SlashCommandBuilder()
+    .setName("غرامات_العضو")
+    .setDescription("عرض غرامات عضو")
+    .addUserOption(option =>
+      option
+        .setName("العضو")
+        .setDescription("العضو")
+        .setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  // التحذير اليدوي
+  new SlashCommandBuilder()
+    .setName("تحذير")
+    .setDescription("إعطاء تحذير لعضو")
+    .addUserOption(option =>
+      option
+        .setName("العضو")
+        .setDescription("العضو")
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName("السبب")
+        .setDescription("سبب التحذير")
+        .setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  // الترقية
+  new SlashCommandBuilder()
+    .setName("ترقية")
+    .setDescription("ترقية عضو")
+    .addUserOption(option =>
+      option
+        .setName("العضو")
+        .setDescription("العضو")
+        .setRequired(true)
+    )
+    .addRoleOption(option =>
+      option
+        .setName("الرتبة")
+        .setDescription("الرتبة الجديدة")
+        .setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  // التنزيل
+  new SlashCommandBuilder()
+    .setName("تنزيل")
+    .setDescription("تنزيل رتبة عضو")
+    .addUserOption(option =>
+      option
+        .setName("العضو")
+        .setDescription("العضو")
+        .setRequired(true)
+    )
+    .addRoleOption(option =>
+      option
+        .setName("الرتبة")
+        .setDescription("الرتبة التي تريد إعطاءها")
+        .setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  // الإجازة
+  new SlashCommandBuilder()
+    .setName("اجازة")
+    .setDescription("إعطاء إجازة لعضو")
+    .addUserOption(option =>
+      option
+        .setName("العضو")
+        .setDescription("العضو")
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName("الأيام")
+        .setDescription("عدد أيام الإجازة")
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(30)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  // النقاط
+  new SlashCommandBuilder()
+    .setName("نقاط")
+    .setDescription("عرض نقاط عضو")
+    .addUserOption(option =>
+      option
+        .setName("العضو")
+        .setDescription("العضو")
+        .setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("ترتيب")
+    .setDescription("عرض ترتيب الأعضاء بالنقاط"),
+
+  // الإحصائيات
+  new SlashCommandBuilder()
+    .setName("احصائيات")
+    .setDescription("عرض إحصائيات عضو")
+    .addUserOption(option =>
+      option
+        .setName("العضو")
+        .setDescription("العضو")
+        .setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("تقرير")
+    .setDescription("عرض التقرير العام")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
 
 ].map(command => command.toJSON());
 
-// =========================
-// تشغيل البوت
-// =========================
+// =====================================================
+// Ready
+// =====================================================
 
 client.once("ready", async () => {
 
@@ -145,24 +483,22 @@ client.once("ready", async () => {
     }
 
   } catch (error) {
-
     console.error(
-      "❌ حصل خطأ في تسجيل الأوامر:",
+      "❌ خطأ في تسجيل الأوامر:",
       error
     );
-
   }
 
-  // تشغيل فحص الغياب
-  checkAbsence();
+  // فحص النظام
+  dailyCheck();
 
-  // فحص كل ساعة
-  setInterval(checkAbsence, 60 * 60 * 1000);
+  // كل ساعة
+  setInterval(dailyCheck, 60 * 60 * 1000);
 });
 
-// =========================
-// التعامل مع الأوامر
-// =========================
+// =====================================================
+// Interaction
+// =====================================================
 
 client.on("interactionCreate", async interaction => {
 
@@ -172,163 +508,124 @@ client.on("interactionCreate", async interaction => {
 
   const data = loadData();
 
-  // =========================
-  // تحديد العضو
-  // =========================
-
-  let user = interaction.options.getUser("العضو");
-
-  // لو مفيش عضو محدد
-  // الأمر يشتغل على الشخص نفسه
-
-  if (!user) {
-    user = interaction.user;
-  }
-
-  const id = user.id;
-
-  // إنشاء بيانات العضو
-
-  if (!data[id]) {
-
-    data[id] = {
-      name: user.username,
-      presentToday: false,
-      currentSession: false,
-      attendance: [],
-      warns: [],
-      lastAttendance: null
-    };
-
-  }
-
-  data[id].name = user.username;
-
-  // =========================
-  // /حضور
-  // =========================
+  // ===================================================
+  // الحضور
+  // ===================================================
 
   if (command === "حضور") {
 
-    // لو بيحاول يسجل شخص تاني
-    // لازم يكون مشرف
+    let user =
+      interaction.options.getUser("العضو") ||
+      interaction.user;
 
     if (
       user.id !== interaction.user.id &&
-      !interaction.member.permissions.has(
-        PermissionFlagsBits.ManageGuild
-      )
+      !isAdmin(interaction)
     ) {
-
       return interaction.reply({
-        content: "❌ مينفعش تسجل حضور شخص تاني.",
+        content: "❌ لا يمكنك تسجيل حضور شخص آخر.",
         ephemeral: true
       });
-
     }
 
-    const today = getEgyptDate();
+    const player = ensurePlayer(data, user);
 
-    // منع التسجيل مرتين
+    const today = egyptDate();
 
-    if (data[id].presentToday) {
-
+    if (player.presentToday) {
       return interaction.reply({
-        content:
-          `⚠️ **${user.username}** مسجل حضور بالفعل النهارده.`,
+        content: `⚠️ ${user} مسجل حضور بالفعل اليوم.`,
         ephemeral: true
       });
-
     }
 
-    data[id].presentToday = true;
-    data[id].currentSession = true;
-    data[id].lastAttendance = today;
+    player.presentToday = true;
+    player.lastAttendance = today;
 
-    // إضافة اليوم لسجل الحضور
-
-    if (!data[id].attendance.includes(today)) {
-      data[id].attendance.push(today);
+    if (!player.attendance.includes(today)) {
+      player.attendance.push(today);
     }
+
+    // حضور = نقطة
+    player.points += 1;
 
     saveData(data);
 
     return interaction.reply(
-      `🟢 تم تسجيل حضور ${user}\n📅 اليوم: **${today}**`
+      `🟢 تم تسجيل حضور ${user}\n📅 ${today}\n⭐ +1 نقطة`
     );
   }
 
-  // =========================
-  // /انصراف
-  // =========================
+  // ===================================================
+  // الانصراف
+  // ===================================================
 
   if (command === "انصراف") {
 
+    let user =
+      interaction.options.getUser("العضو") ||
+      interaction.user;
+
     if (
       user.id !== interaction.user.id &&
-      !interaction.member.permissions.has(
-        PermissionFlagsBits.ManageGuild
-      )
+      !isAdmin(interaction)
     ) {
-
       return interaction.reply({
-        content: "❌ مينفعش تسجل انصراف شخص تاني.",
+        content: "❌ لا يمكنك تسجيل انصراف شخص آخر.",
         ephemeral: true
       });
-
     }
 
-    if (!data[id].currentSession) {
+    const player = ensurePlayer(data, user);
 
+    if (!player.presentToday) {
       return interaction.reply({
-        content:
-          `⚠️ **${user.username}** مش مسجل حضور حاليًا.`,
+        content: `⚠️ ${user} مش مسجل حضور النهارده.`,
         ephemeral: true
       });
-
     }
 
-    data[id].currentSession = false;
+    player.presentToday = false;
 
     saveData(data);
 
     return interaction.reply(
-      `🔴 تم تسجيل انصراف ${user}`
+      `🔴 تم تسجيل انصراف ${user}.`
     );
   }
 
-  // =========================
-  // /حضوراتي
-  // =========================
+  // ===================================================
+  // حضوراتي
+  // ===================================================
 
   if (command === "حضوراتي") {
 
-    const memberData = data[interaction.user.id];
+    const player = data[interaction.user.id];
 
     if (
-      !memberData ||
-      memberData.attendance.length === 0
+      !player ||
+      !player.attendance ||
+      player.attendance.length === 0
     ) {
-
       return interaction.reply({
         content: "📋 مفيش سجل حضور ليك لسه.",
         ephemeral: true
       });
-
     }
 
-    const attendanceList =
-      memberData.attendance
+    const list =
+      player.attendance
         .slice(-14)
         .map(date => `📅 ${date}`)
         .join("\n");
 
     const embed = new EmbedBuilder()
       .setTitle("📋 سجل حضورك")
-      .setDescription(attendanceList)
-      .setFooter({
-        text:
-          `إجمالي أيام الحضور: ${memberData.attendance.length}`
+      .setDescription(list)
+      .addFields({
+        name: "إجمالي أيام الحضور",
+        value: `${player.attendance.length}`,
+        inline: true
       })
       .setTimestamp();
 
@@ -338,54 +635,729 @@ client.on("interactionCreate", async interaction => {
     });
   }
 
-  // =========================
-  // /الغيابات
-  // =========================
+  // ===================================================
+  // الغيابات
+  // ===================================================
 
   if (command === "الغيابات") {
 
-    if (
-      !interaction.member.permissions.has(
-        PermissionFlagsBits.ManageGuild
-      )
-    ) {
-
+    if (!isAdmin(interaction)) {
       return interaction.reply({
         content: "❌ الأمر ده للإدارة فقط.",
         ephemeral: true
       });
-
     }
 
-    const today = getEgyptDate();
+    const members = await interaction.guild.members.fetch();
 
-    const absentPlayers = [];
+    const absent = [];
 
-    for (const [playerId, player] of Object.entries(data)) {
+    for (const member of members.values()) {
+
+      if (member.user.bot) continue;
+
+      const player = data[member.id];
+
+      if (!player) continue;
 
       if (!player.presentToday) {
-
-        absentPlayers.push(
-          `<@${playerId}>`
-        );
-
+        absent.push(`<@${member.id}>`);
       }
-
     }
 
-    if (absentPlayers.length === 0) {
-
+    if (absent.length === 0) {
       return interaction.reply(
-        "✅ مفيش غياب مسجل حاليًا."
+        "✅ مفيش أعضاء غائبين."
+      );
+    }
+
+    return interaction.reply(
+      `❌ **الغائبين اليوم:**\n\n${absent.join("\n")}`
+    );
+  }
+
+  // ===================================================
+  // إنشاء تاسك
+  // ===================================================
+
+  if (command === "تاسك") {
+
+    if (!isAdmin(interaction)) {
+      return interaction.reply({
+        content: "❌ الأمر ده للإدارة فقط.",
+        ephemeral: true
+      });
+    }
+
+    const user =
+      interaction.options.getUser("العضو");
+
+    const taskText =
+      interaction.options.getString("المهمة");
+
+    const player = ensurePlayer(data, user);
+
+    const taskId =
+      player.tasks.length + 1;
+
+    player.tasks.push({
+      id: taskId,
+      text: taskText,
+      date: egyptDate(),
+      submitted: false,
+      submittedAt: null
+    });
+
+    saveData(data);
+
+    return interaction.reply(
+      `📋 تم إنشاء التاسك لـ ${user}\n\n` +
+      `🔢 رقم التاسك: **${taskId}**\n` +
+      `📝 المهمة: **${taskText}**\n` +
+      `📅 اليوم: **${egyptDate()}**`
+    );
+  }
+
+  // ===================================================
+  // تسليم تاسك
+  // ===================================================
+
+  if (command === "تسليم") {
+
+    const number =
+      interaction.options.getInteger("رقم");
+
+    const player =
+      data[interaction.user.id];
+
+    if (!player) {
+      return interaction.reply({
+        content: "❌ مفيش بيانات ليك.",
+        ephemeral: true
+      });
+    }
+
+    const task =
+      player.tasks.find(
+        t => t.id === number && !t.submitted
       );
 
+    if (!task) {
+      return interaction.reply({
+        content: "❌ التاسك مش موجود أو اتسلّم بالفعل.",
+        ephemeral: true
+      });
+    }
+
+    task.submitted = true;
+    task.submittedAt = new Date().toISOString();
+
+    player.points += 2;
+
+    saveData(data);
+
+    return interaction.reply(
+      `✅ تم تسليم التاسك **#${number}** بنجاح.\n⭐ +2 نقاط`
+    );
+  }
+
+  // ===================================================
+  // تاسكاتي
+  // ===================================================
+
+  if (command === "تاسكاتي") {
+
+    const player =
+      data[interaction.user.id];
+
+    if (
+      !player ||
+      !player.tasks ||
+      player.tasks.length === 0
+    ) {
+      return interaction.reply({
+        content: "📋 مفيش تاسكات ليك.",
+        ephemeral: true
+      });
+    }
+
+    const list =
+      player.tasks
+        .slice(-10)
+        .map(task =>
+          `${task.submitted ? "✅" : "❌"} **#${task.id}** — ${task.text}\n📅 ${task.date}`
+        )
+        .join("\n\n");
+
+    const embed = new EmbedBuilder()
+      .setTitle("📋 تاسكاتك")
+      .setDescription(list)
+      .setTimestamp();
+
+    return interaction.reply({
+      embeds: [embed],
+      ephemeral: true
+    });
+  }
+
+  // ===================================================
+  // كل التاسكات
+  // ===================================================
+
+  if (command === "التاسكات") {
+
+    if (!isAdmin(interaction)) {
+      return interaction.reply({
+        content: "❌ الأمر ده للإدارة فقط.",
+        ephemeral: true
+      });
+    }
+
+    let text = "";
+
+    for (const [id, player] of Object.entries(data)) {
+
+      if (!player.tasks) continue;
+
+      const pending =
+        player.tasks.filter(
+          task => !task.submitted
+        );
+
+      if (pending.length === 0) continue;
+
+      text +=
+        `👤 <@${id}>\n` +
+        pending
+          .map(t => `📋 #${t.id} — ${t.text}`)
+          .join("\n") +
+        "\n\n";
+    }
+
+    if (!text) {
+      return interaction.reply(
+        "✅ مفيش تاسكات معلقة."
+      );
     }
 
     const embed = new EmbedBuilder()
-      .setTitle("❌ قائمة الغياب")
-      .setDescription(
-        `📅 **${today}**\n\n` +
-        absentPlayers.join("\n")
+      .setTitle("📋 التاسكات المعلقة")
+      .setDescription(text)
+      .setTimestamp();
+
+    return interaction.reply({
+      embeds: [embed]
+    });
+  }
+
+  // ===================================================
+  // الغرامة
+  // ===================================================
+
+  if (command === "غرامة") {
+
+    if (!isAdmin(interaction)) {
+      return interaction.reply({
+        content: "❌ الأمر ده للإدارة فقط.",
+        ephemeral: true
+      });
+    }
+
+    const user =
+      interaction.options.getUser("العضو");
+
+    const reason =
+      interaction.options.getString("السبب");
+
+    const amounts = {
+      "عدم انصياع للأوامر": 3000,
+      "أشياء غير لائقة": 2500,
+      "التأخير عن مهمة": 1000,
+      "الغياب بدون إذن": 1500,
+      "مخالفة قوانين العصابة": 2000
+    };
+
+    const amount = amounts[reason] || 0;
+
+    const player =
+      ensurePlayer(data, user);
+
+    player.fines.push({
+      reason,
+      amount,
+      date: egyptDate(),
+      by: interaction.user.id
+    });
+
+    player.points -= 1;
+
+    saveData(data);
+
+    return interaction.reply(
+      `💰 تم تسجيل غرامة على ${user}\n\n` +
+      `📝 السبب: **${reason}**\n` +
+      `💵 المبلغ: **${amount.toLocaleString()}**\n` +
+      `⭐ -1 نقطة`
+    );
+  }
+
+  // ===================================================
+  // غراماتي
+  // ===================================================
+
+  if (command === "غراماتي") {
+
+    const player =
+      data[interaction.user.id];
+
+    if (
+      !player ||
+      !player.fines ||
+      player.fines.length === 0
+    ) {
+      return interaction.reply(
+        "✅ مفيش غرامات عليك."
+      );
+    }
+
+    const total =
+      player.fines.reduce(
+        (sum, fine) =>
+          sum + fine.amount,
+        0
+      );
+
+    const list =
+      player.fines
+        .slice(-10)
+        .map(
+          fine =>
+            `💰 **${fine.amount.toLocaleString()}** — ${fine.reason} — ${fine.date}`
+        )
+        .join("\n");
+
+    const embed = new EmbedBuilder()
+      .setTitle("💰 غراماتك")
+      .setDescription(list)
+      .addFields({
+        name: "الإجمالي",
+        value: `${total.toLocaleString()} جنيه`
+      })
+      .setTimestamp();
+
+    return interaction.reply({
+      embeds: [embed],
+      ephemeral: true
+    });
+  }
+
+  // ===================================================
+  // غرامات العضو
+  // ===================================================
+
+  if (command === "غرامات_العضو") {
+
+    if (!isAdmin(interaction)) {
+      return interaction.reply({
+        content: "❌ الأمر ده للإدارة فقط.",
+        ephemeral: true
+      });
+    }
+
+    const user =
+      interaction.options.getUser("العضو");
+
+    const player =
+      data[user.id];
+
+    if (
+      !player ||
+      !player.fines ||
+      player.fines.length === 0
+    ) {
+      return interaction.reply(
+        `✅ ${user} مفيش عليه غرامات.`
+      );
+    }
+
+    const total =
+      player.fines.reduce(
+        (sum, fine) =>
+          sum + fine.amount,
+        0
+      );
+
+    const list =
+      player.fines
+        .map(
+          fine =>
+            `💰 ${fine.amount.toLocaleString()} — ${fine.reason} — ${fine.date}`
+        )
+        .join("\n");
+
+    return interaction.reply(
+      `💰 **غرامات ${user}**\n\n` +
+      `${list}\n\n` +
+      `💵 **الإجمالي: ${total.toLocaleString()} جنيه**`
+    );
+  }
+
+  // ===================================================
+  // تحذير يدوي
+  // ===================================================
+
+  if (command === "تحذير") {
+
+    if (!isAdmin(interaction)) {
+      return interaction.reply({
+        content: "❌ الأمر ده للإدارة فقط.",
+        ephemeral: true
+      });
+    }
+
+    const user =
+      interaction.options.getUser("العضو");
+
+    const reason =
+      interaction.options.getString("السبب");
+
+    await addWarn(
+      interaction.guild,
+      user.id,
+      "absence",
+      reason
+    );
+
+    return interaction.reply(
+      `⚠️ تم إعطاء Warn لـ ${user}\n📝 السبب: **${reason}**`
+    );
+  }
+
+  // ===================================================
+  // ترقية
+  // ===================================================
+
+  if (command === "ترقية") {
+
+    if (!isAdmin(interaction)) {
+      return interaction.reply({
+        content: "❌ الأمر ده للإدارة فقط.",
+        ephemeral: true
+      });
+    }
+
+    const user =
+      interaction.options.getUser("العضو");
+
+    const role =
+      interaction.options.getRole("الرتبة");
+
+    const member =
+      await interaction.guild.members.fetch(user.id);
+
+    try {
+      await member.roles.add(role.id);
+    } catch {
+      return interaction.reply({
+        content:
+          "❌ مقدرتش أضيف الرتبة. تأكد إن رتبة البوت أعلى منها.",
+        ephemeral: true
+      });
+    }
+
+    return interaction.reply(
+      `🏅 تم ترقية ${user} إلى **${role.name}**`
+    );
+  }
+
+  // ===================================================
+  // تنزيل
+  // ===================================================
+
+  if (command === "تنزيل") {
+
+    if (!isAdmin(interaction)) {
+      return interaction.reply({
+        content: "❌ الأمر ده للإدارة فقط.",
+        ephemeral: true
+      });
+    }
+
+    const user =
+      interaction.options.getUser("العضو");
+
+    const role =
+      interaction.options.getRole("الرتبة");
+
+    const member =
+      await interaction.guild.members.fetch(user.id);
+
+    try {
+      await member.roles.add(role.id);
+    } catch {
+      return interaction.reply({
+        content: "❌ مقدرتش أغير الرتبة.",
+        ephemeral: true
+      });
+    }
+
+    return interaction.reply(
+      `📉 تم تنزيل ${user} إلى **${role.name}**`
+    );
+  }
+
+  // ===================================================
+  // إجازة
+  // ===================================================
+
+  if (command === "اجازة") {
+
+    if (!isAdmin(interaction)) {
+      return interaction.reply({
+        content: "❌ الأمر ده للإدارة فقط.",
+        ephemeral: true
+      });
+    }
+
+    const user =
+      interaction.options.getUser("العضو");
+
+    const days =
+      interaction.options.getInteger("الأيام");
+
+    const player =
+      ensurePlayer(data, user);
+
+    const start = new Date();
+
+    const end =
+      new Date(
+        start.getTime() +
+        days * 86400000
+      );
+
+    player.vacations.push({
+      start: egyptDate(start),
+      end: egyptDate(end),
+      days
+    });
+
+    saveData(data);
+
+    return interaction.reply(
+      `🌴 تم إعطاء ${user} إجازة لمدة **${days} يوم**.\n` +
+      `📅 من: **${egyptDate(start)}**\n` +
+      `📅 إلى: **${egyptDate(end)}**`
+    );
+  }
+
+  // ===================================================
+  // نقاط
+  // ===================================================
+
+  if (command === "نقاط") {
+
+    const user =
+      interaction.options.getUser("العضو") ||
+      interaction.user;
+
+    const player =
+      data[user.id];
+
+    const points =
+      player ? player.points : 0;
+
+    return interaction.reply(
+      `⭐ نقاط ${user}: **${points}**`
+    );
+  }
+
+  // ===================================================
+  // ترتيب
+  // ===================================================
+
+  if (command === "ترتيب") {
+
+    const players =
+      Object.entries(data)
+        .sort(
+          (a, b) =>
+            (b[1].points || 0) -
+            (a[1].points || 0)
+        );
+
+    if (players.length === 0) {
+      return interaction.reply(
+        "📊 مفيش بيانات لسه."
+      );
+    }
+
+    const text =
+      players
+        .slice(0, 10)
+        .map(
+          ([id, player], index) =>
+            `${index + 1}. <@${id}> — ⭐ ${player.points || 0}`
+        )
+        .join("\n");
+
+    const embed = new EmbedBuilder()
+      .setTitle("🏆 ترتيب النقاط")
+      .setDescription(text)
+      .setTimestamp();
+
+    return interaction.reply({
+      embeds: [embed]
+    });
+  }
+
+  // ===================================================
+  // الإحصائيات
+  // ===================================================
+
+  if (command === "احصائيات") {
+
+    const user =
+      interaction.options.getUser("العضو") ||
+      interaction.user;
+
+    const player =
+      data[user.id];
+
+    if (!player) {
+      return interaction.reply(
+        "❌ مفيش بيانات للعضو."
+      );
+    }
+
+    const completedTasks =
+      player.tasks.filter(
+        task => task.submitted
+      ).length;
+
+    const pendingTasks =
+      player.tasks.filter(
+        task => !task.submitted
+      ).length;
+
+    const totalFines =
+      player.fines.reduce(
+        (sum, fine) =>
+          sum + fine.amount,
+        0
+      );
+
+    const embed = new EmbedBuilder()
+      .setTitle(`📊 إحصائيات ${user.username}`)
+      .addFields(
+        {
+          name: "👥 الحضور",
+          value: `${player.attendance.length} يوم`,
+          inline: true
+        },
+        {
+          name: "📋 التاسكات المسلمة",
+          value: `${completedTasks}`,
+          inline: true
+        },
+        {
+          name: "📋 التاسكات المعلقة",
+          value: `${pendingTasks}`,
+          inline: true
+        },
+        {
+          name: "⚠️ Warn التاسكات",
+          value: `${player.taskWarns}`,
+          inline: true
+        },
+        {
+          name: "⚠️ Warn الغياب",
+          value: `${player.absenceWarns}`,
+          inline: true
+        },
+        {
+          name: "💰 الغرامات",
+          value: `${totalFines.toLocaleString()} جنيه`,
+          inline: true
+        },
+        {
+          name: "⭐ النقاط",
+          value: `${player.points}`,
+          inline: true
+        }
+      )
+      .setTimestamp();
+
+    return interaction.reply({
+      embeds: [embed]
+    });
+  }
+
+  // ===================================================
+  // التقرير
+  // ===================================================
+
+  if (command === "تقرير") {
+
+    if (!isAdmin(interaction)) {
+      return interaction.reply({
+        content: "❌ الأمر ده للإدارة فقط.",
+        ephemeral: true
+      });
+    }
+
+    let attendance = 0;
+    let tasks = 0;
+    let pending = 0;
+    let fines = 0;
+    let warns = 0;
+
+    for (const player of Object.values(data)) {
+
+      if (player.presentToday) {
+        attendance++;
+      }
+
+      for (const task of player.tasks || []) {
+        if (task.submitted) tasks++;
+        else pending++;
+      }
+
+      for (const fine of player.fines || []) {
+        fines += fine.amount;
+      }
+
+      warns += player.totalWarns || 0;
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle("📋 التقرير العام")
+      .addFields(
+        {
+          name: "🟢 الحضور اليوم",
+          value: `${attendance}`,
+          inline: true
+        },
+        {
+          name: "✅ التاسكات المسلمة",
+          value: `${tasks}`,
+          inline: true
+        },
+        {
+          name: "❌ التاسكات المعلقة",
+          value: `${pending}`,
+          inline: true
+        },
+        {
+          name: "⚠️ إجمالي التحذيرات",
+          value: `${warns}`,
+          inline: true
+        },
+        {
+          name: "💰 إجمالي الغرامات",
+          value: `${fines.toLocaleString()} جنيه`,
+          inline: true
+        }
       )
       .setTimestamp();
 
@@ -396,84 +1368,123 @@ client.on("interactionCreate", async interaction => {
 
 });
 
-// =========================
-// فحص الغياب
-// =========================
+// =====================================================
+// الفحص اليومي
+// =====================================================
 
-function checkAbsence() {
+async function dailyCheck() {
 
   const data = loadData();
 
-  const today = getEgyptDate();
+  const today = egyptDate();
 
-  let changed = false;
+  for (const guild of client.guilds.cache.values()) {
 
-  for (const [id, player] of Object.entries(data)) {
+    // ===============================================
+    // فحص الأعضاء
+    // ===============================================
 
-    if (!player.attendance) {
-      player.attendance = [];
+    let members;
+
+    try {
+      members = await guild.members.fetch();
+    } catch {
+      continue;
     }
 
-    if (!player.warns) {
-      player.warns = [];
-    }
+    for (const member of members.values()) {
 
-    // =========================
-    // حساب آخر يوم حضور
-    // =========================
+      if (member.user.bot) continue;
 
-    const lastAttendance =
-      player.lastAttendance;
+      const player = data[member.id];
 
-    if (!lastAttendance) continue;
+      if (!player) continue;
 
-    // تحويل التاريخ
-    const last = new Date(
-      `${lastAttendance}T00:00:00+03:00`
-    );
+      // =============================================
+      // الإجازة
+      // =============================================
 
-    const now = new Date(
-      `${today}T00:00:00+03:00`
-    );
+      let onVacation = false;
 
-    const difference =
-      Math.floor(
-        (now - last) /
-        (1000 * 60 * 60 * 24)
-      );
+      for (const vacation of player.vacations || []) {
 
-    // =========================
-    // يومين غياب
-    // =========================
+        const current =
+          new Date(`${today}T00:00:00+03:00`);
 
-    if (difference >= 2) {
+        const start =
+          new Date(`${vacation.start}T00:00:00+03:00`);
 
-      const alreadyWarned =
-        player.warns.some(
-          warn =>
-            warn.reason ===
-              "الغياب يومين متتاليين" &&
-            warn.date === today
-        );
+        const end =
+          new Date(`${vacation.end}T00:00:00+03:00`);
 
-      if (!alreadyWarned) {
+        if (
+          current >= start &&
+          current <= end
+        ) {
+          onVacation = true;
+          break;
+        }
+      }
 
-        player.warns.push({
-          reason: "الغياب يومين متتاليين",
-          date: today,
-          automatic: true
-        });
+      if (onVacation) continue;
 
-        changed = true;
+      // =============================================
+      // الغياب
+      // =============================================
 
-        sendAbsenceWarn(id);
+      if (
+        player.lastAttendance &&
+        player.lastAbsenceCheck !== today
+      ) {
+
+        const difference =
+          daysBetween(
+            player.lastAttendance,
+            today
+          );
+
+        if (difference >= 2) {
+
+          await addWarn(
+            guild,
+            member.id,
+            "absence",
+            "الغياب يومين متتاليين"
+          );
+
+          player.lastAbsenceCheck = today;
+        }
+      }
+
+      // =============================================
+      // التاسكات القديمة غير المسلمة
+      // =============================================
+
+      for (const task of player.tasks || []) {
+
+        if (
+          task.submitted ||
+          task.warned
+        ) continue;
+
+        if (task.date !== today) {
+
+          task.warned = true;
+
+          await addWarn(
+            guild,
+            member.id,
+            "task",
+            `عدم تسليم التاسك #${task.id}: ${task.text}`
+          );
+        }
       }
     }
   }
 
-  // =========================
-  // بداية يوم جديد
-  // =========================
+  // ===============================================
+  // تصفير حضور اليوم
+  // ===============================================
 
   for (const player of Object.values(data)) {
 
@@ -481,58 +1492,17 @@ function checkAbsence() {
 
       player.presentToday = false;
       player.lastReset = today;
-
-      changed = true;
-
     }
-
   }
 
-  if (changed) {
-    saveData(data);
-  }
+  saveData(data);
+
+  console.log(`🔄 تم فحص النظام — ${today}`);
 }
 
-// =========================
-// إرسال Warn
-// =========================
-
-async function sendAbsenceWarn(userId) {
-
-  try {
-
-    const channel =
-      await client.channels.fetch(
-        WARN_CHANNEL_ID
-      );
-
-    if (!channel) return;
-
-    const embed = new EmbedBuilder()
-      .setTitle("⚠️ Warn تلقائي")
-      .setDescription(
-        `<@${userId}> حصل على **Warn** بسبب الغياب يومين متتاليين.`
-      )
-      .setTimestamp();
-
-    await channel.send({
-      content: `<@${userId}>`,
-      embeds: [embed]
-    });
-
-  } catch (error) {
-
-    console.error(
-      "❌ فشل إرسال Warn:",
-      error
-    );
-
-  }
-}
-
-// =========================
-// تسجيل الدخول
-// =========================
+// =====================================================
+// تشغيل البوت
+// =====================================================
 
 client.login(process.env.TOKEN);
 ```
