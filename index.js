@@ -199,7 +199,7 @@ try {
     const embed = new EmbedBuilder()
       .setTitle("⚠️ تحذير جديد")
       .setDescription(
-        `<@${userId}>\n\n` +
+       "<@" + userId + ">\n\n" +
         `📌 النوع: **${type === "task" ? "تاسك" : "غياب"}**\n` +
         `🔢 التحذير: **${warnNumber}/3**\n` +
         `📝 السبب: **${reason}**`
