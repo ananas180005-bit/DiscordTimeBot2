@@ -464,7 +464,7 @@ const commands = [
 
 client.once("ready", async () => {
 
-  console.log(`✅ البوت شغال باسم ${client.user.tag}`);
+console.log("البوت شغال باسم " + client.user.tag);
 
   const rest = new REST({ version: "10" })
     .setToken(process.env.TOKEN);
