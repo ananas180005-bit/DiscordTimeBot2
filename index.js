@@ -484,7 +484,7 @@ console.log("البوت شغال باسم " + client.user.tag);
       );
 
       console.log(
-        `✅ تم تسجيل الأوامر في: ${guild.name}`
+     "تم تسجيل الأوامر في: " + guild.name
       );
     }
 
