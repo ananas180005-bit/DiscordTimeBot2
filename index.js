@@ -191,24 +191,29 @@ async function addWarn(guild, userId, type, reason) {
     console.log("⚠️ لم أستطع تعديل رتبة الـWarn:", error.message);
   }
 
-  // إرسال التحذير للروم
-  try {
-    const channel = await guild.channels.fetch(WARN_CHANNEL_ID);
+ // إرسال التحذير للروم
+try {
+  const channel = await guild.channels.fetch(WARN_CHANNEL_ID);
 
-    if (channel) {
-      const embed = new EmbedBuilder()
-        .setTitle("⚠️ تحذير جديد")
-        .setDescription(
-          `<@${userId}>\n\n` +
-          `📌 النوع: **${type === "task" ? "تاسك" : "غياب"}**\n` +
-          `🔢 التحذير: **${warnNumber}/3**\n` +
-          `📝 السبب: **${reason}**`
-        )
-        .setTimestamp();
+  if (channel) {
+    const embed = new EmbedBuilder()
+      .setTitle("⚠️ تحذير جديد")
+      .setDescription(
+        `<@${userId}>\n\n` +
+        `📌 النوع: **${type === "task" ? "تاسك" : "غياب"}**\n` +
+        `🔢 التحذير: **${warnNumber}/3**\n` +
+        `📝 السبب: **${reason}**`
+      )
+      .setTimestamp();
 
-      await channel.send({
-        content: `<@${userId}>`,
-        embeds: [embed]
+    await channel.send({
+      content: `<@${userId}>`,
+      embeds: [embed],
+    });
+  }
+} catch (error) {
+  console.error("Error sending warning:", error);
+}
       });
     }
   } catch (error) {
