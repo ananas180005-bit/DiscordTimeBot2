@@ -208,7 +208,7 @@ try {
       .setTimestamp();
 
     await channel.send({
-      content: `<@${userId}>`,
+  content: "<@" + userId + ">",
       embeds: [embed],
     });
   }
