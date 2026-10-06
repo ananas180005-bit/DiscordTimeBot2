@@ -1,3 +1,4 @@
+```js
 const {
   Client,
   GatewayIntentBits,
@@ -18,9 +19,19 @@ const client = new Client({
   ]
 });
 
+// =========================
+// إعدادات البوت
+// =========================
+
+// حط ID روم الـ Warn هنا
+const WARN_CHANNEL_ID = "حط_ايدي_روم_الورن_هنا";
+
+// =========================
+// ملف البيانات
+// =========================
+
 const DATA_FILE = "./players.json";
 
-// إنشاء ملف البيانات لو مش موجود
 if (!fs.existsSync(DATA_FILE)) {
   fs.writeFileSync(DATA_FILE, "{}");
 }
@@ -37,227 +48,491 @@ function saveData(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-// تحويل الملي ثانية إلى ساعات ودقائق
-function formatTime(ms) {
-  const totalMinutes = Math.floor(ms / 60000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
+// =========================
+// التاريخ بتوقيت مصر
+// =========================
 
-  return `${hours} ساعة و ${minutes} دقيقة`;
+function getEgyptDate() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Cairo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
 }
 
-// أوامر السلاش
+// =========================
+// أوامر البوت
+// =========================
+
 const commands = [
-  new SlashCommandBuilder()
-    .setName("سجلني")
-    .setDescription("بدء تسجيل وقت عضو")
-    .addUserOption(option =>
-      option
-        .setName("العضو")
-        .setDescription("العضو الذي تريد تسجيله")
-        .setRequired(true)
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+  // =========================
+  // الحضور
+  // =========================
 
   new SlashCommandBuilder()
-    .setName("شيلني")
-    .setDescription("إيقاف تسجيل وقت عضو")
+    .setName("حضور")
+    .setDescription("تسجيل حضور عضو")
     .addUserOption(option =>
       option
         .setName("العضو")
-        .setDescription("العضو الذي تريد إيقاف تسجيله")
-        .setRequired(true)
-    )
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-
-  new SlashCommandBuilder()
-    .setName("وقتي")
-    .setDescription("عرض وقت لعب عضو")
-    .addUserOption(option =>
-      option
-        .setName("العضو")
-        .setDescription("العضو الذي تريد معرفة وقته")
-        .setRequired(true)
+        .setDescription("العضو")
+        .setRequired(false)
     ),
 
+  // =========================
+  // الانصراف
+  // =========================
+
   new SlashCommandBuilder()
-    .setName("المتصدرين")
-    .setDescription("عرض أكثر الأعضاء لعبًا")
+    .setName("انصراف")
+    .setDescription("تسجيل انصراف عضو")
+    .addUserOption(option =>
+      option
+        .setName("العضو")
+        .setDescription("العضو")
+        .setRequired(false)
+    ),
+
+  // =========================
+  // حضوراتي
+  // =========================
+
+  new SlashCommandBuilder()
+    .setName("حضوراتي")
+    .setDescription("عرض سجل حضورك"),
+
+  // =========================
+  // الغيابات
+  // =========================
+
+  new SlashCommandBuilder()
+    .setName("الغيابات")
+    .setDescription("عرض الأعضاء الغائبين")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+
 ].map(command => command.toJSON());
 
+// =========================
+// تشغيل البوت
+// =========================
+
 client.once("ready", async () => {
+
   console.log(`✅ البوت شغال باسم ${client.user.tag}`);
 
-  const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
+  const rest = new REST({ version: "10" })
+    .setToken(process.env.TOKEN);
 
   try {
+
     for (const guild of client.guilds.cache.values()) {
+
       await rest.put(
-        Routes.applicationGuildCommands(client.user.id, guild.id),
-        { body: commands }
+        Routes.applicationGuildCommands(
+          client.user.id,
+          guild.id
+        ),
+        {
+          body: commands
+        }
       );
 
-      console.log(`✅ تم تسجيل أوامر السلاش في سيرفر: ${guild.name}`);
+      console.log(
+        `✅ تم تسجيل الأوامر في: ${guild.name}`
+      );
     }
+
   } catch (error) {
-    console.error("❌ حصل خطأ في تسجيل الأوامر:", error);
+
+    console.error(
+      "❌ حصل خطأ في تسجيل الأوامر:",
+      error
+    );
+
   }
+
+  // تشغيل فحص الغياب
+  checkAbsence();
+
+  // فحص كل ساعة
+  setInterval(checkAbsence, 60 * 60 * 1000);
 });
 
+// =========================
+// التعامل مع الأوامر
+// =========================
+
 client.on("interactionCreate", async interaction => {
+
   if (!interaction.isChatInputCommand()) return;
 
   const command = interaction.commandName;
+
   const data = loadData();
 
   // =========================
-  // /سجلني
+  // تحديد العضو
   // =========================
-  if (command === "سجلني") {
-    if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+
+  let user = interaction.options.getUser("العضو");
+
+  // لو مفيش عضو محدد
+  // الأمر يشتغل على الشخص نفسه
+
+  if (!user) {
+    user = interaction.user;
+  }
+
+  const id = user.id;
+
+  // إنشاء بيانات العضو
+
+  if (!data[id]) {
+
+    data[id] = {
+      name: user.username,
+      presentToday: false,
+      currentSession: false,
+      attendance: [],
+      warns: [],
+      lastAttendance: null
+    };
+
+  }
+
+  data[id].name = user.username;
+
+  // =========================
+  // /حضور
+  // =========================
+
+  if (command === "حضور") {
+
+    // لو بيحاول يسجل شخص تاني
+    // لازم يكون مشرف
+
+    if (
+      user.id !== interaction.user.id &&
+      !interaction.member.permissions.has(
+        PermissionFlagsBits.ManageGuild
+      )
+    ) {
+
       return interaction.reply({
-        content: "❌ الأمر ده للمشرفين فقط.",
+        content: "❌ مينفعش تسجل حضور شخص تاني.",
         ephemeral: true
       });
+
     }
 
-    const user = interaction.options.getUser("العضو");
-    const id = user.id;
+    const today = getEgyptDate();
 
-    if (!data[id]) {
-      data[id] = {
-        name: user.username,
-        total: 0,
-        start: null
-      };
-    }
+    // منع التسجيل مرتين
 
-    data[id].name = user.username;
+    if (data[id].presentToday) {
 
-    if (data[id].start) {
       return interaction.reply({
-        content: `⚠️ **${user.username}** مسجل بالفعل!`,
+        content:
+          `⚠️ **${user.username}** مسجل حضور بالفعل النهارده.`,
         ephemeral: true
       });
+
     }
 
-    data[id].start = Date.now();
+    data[id].presentToday = true;
+    data[id].currentSession = true;
+    data[id].lastAttendance = today;
+
+    // إضافة اليوم لسجل الحضور
+
+    if (!data[id].attendance.includes(today)) {
+      data[id].attendance.push(today);
+    }
 
     saveData(data);
 
     return interaction.reply(
-      `🟢 تم تسجيل **${user}** وبدأ حساب وقت اللعب.`
+      `🟢 تم تسجيل حضور ${user}\n📅 اليوم: **${today}**`
     );
   }
 
   // =========================
-  // /شيلني
+  // /انصراف
   // =========================
-  if (command === "شيلني") {
-    if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+
+  if (command === "انصراف") {
+
+    if (
+      user.id !== interaction.user.id &&
+      !interaction.member.permissions.has(
+        PermissionFlagsBits.ManageGuild
+      )
+    ) {
+
       return interaction.reply({
-        content: "❌ الأمر ده للمشرفين فقط.",
+        content: "❌ مينفعش تسجل انصراف شخص تاني.",
         ephemeral: true
       });
+
     }
 
-    const user = interaction.options.getUser("العضو");
-    const id = user.id;
+    if (!data[id].currentSession) {
 
-    if (!data[id] || !data[id].start) {
       return interaction.reply({
-        content: `⚠️ **${user.username}** مش مسجل حاليًا.`,
+        content:
+          `⚠️ **${user.username}** مش مسجل حضور حاليًا.`,
         ephemeral: true
       });
+
     }
 
-    const session = Date.now() - data[id].start;
-
-    data[id].total += session;
-    data[id].start = null;
-    data[id].name = user.username;
+    data[id].currentSession = false;
 
     saveData(data);
 
     return interaction.reply(
-      `🔴 تم إيقاف تسجيل **${user}**.\n\n` +
-      `⏱️ وقت الجلسة: **${formatTime(session)}**\n` +
-      `📊 إجمالي الوقت: **${formatTime(data[id].total)}**`
+      `🔴 تم تسجيل انصراف ${user}`
     );
   }
 
   // =========================
-  // /وقتي
+  // /حضوراتي
   // =========================
-  if (command === "وقتي") {
-    const user = interaction.options.getUser("العضو");
-    const id = user.id;
 
-    if (!data[id]) {
+  if (command === "حضوراتي") {
+
+    const memberData = data[interaction.user.id];
+
+    if (
+      !memberData ||
+      memberData.attendance.length === 0
+    ) {
+
       return interaction.reply({
-        content: `📊 **${user.username}** مفيش له وقت مسجل.`,
+        content: "📋 مفيش سجل حضور ليك لسه.",
         ephemeral: true
       });
+
     }
 
-    let total = data[id].total;
-
-    if (data[id].start) {
-      total += Date.now() - data[id].start;
-    }
-
-    return interaction.reply(
-      `📊 وقت لعب **${user}**\n\n` +
-      `⏱️ الإجمالي: **${formatTime(total)}**`
-    );
-  }
-
-  // =========================
-  // /المتصدرين
-  // =========================
-  if (command === "المتصدرين") {
-    const players = Object.entries(data);
-
-    players.sort((a, b) => {
-      let timeA = a[1].total;
-      let timeB = b[1].total;
-
-      if (a[1].start) {
-        timeA += Date.now() - a[1].start;
-      }
-
-      if (b[1].start) {
-        timeB += Date.now() - b[1].start;
-      }
-
-      return timeB - timeA;
-    });
-
-    if (players.length === 0) {
-      return interaction.reply("🏆 مفيش أعضاء مسجلين لسه.");
-    }
-
-    let text = "";
-
-    players.slice(0, 10).forEach(([id, player], index) => {
-      let total = player.total;
-
-      if (player.start) {
-        total += Date.now() - player.start;
-      }
-
-      text += `${index + 1}. <@${id}> — **${formatTime(total)}**\n`;
-    });
+    const attendanceList =
+      memberData.attendance
+        .slice(-14)
+        .map(date => `📅 ${date}`)
+        .join("\n");
 
     const embed = new EmbedBuilder()
-      .setTitle("🏆 المتصدرين")
-      .setDescription(text)
+      .setTitle("📋 سجل حضورك")
+      .setDescription(attendanceList)
+      .setFooter({
+        text:
+          `إجمالي أيام الحضور: ${memberData.attendance.length}`
+      })
+      .setTimestamp();
+
+    return interaction.reply({
+      embeds: [embed],
+      ephemeral: true
+    });
+  }
+
+  // =========================
+  // /الغيابات
+  // =========================
+
+  if (command === "الغيابات") {
+
+    if (
+      !interaction.member.permissions.has(
+        PermissionFlagsBits.ManageGuild
+      )
+    ) {
+
+      return interaction.reply({
+        content: "❌ الأمر ده للإدارة فقط.",
+        ephemeral: true
+      });
+
+    }
+
+    const today = getEgyptDate();
+
+    const absentPlayers = [];
+
+    for (const [playerId, player] of Object.entries(data)) {
+
+      if (!player.presentToday) {
+
+        absentPlayers.push(
+          `<@${playerId}>`
+        );
+
+      }
+
+    }
+
+    if (absentPlayers.length === 0) {
+
+      return interaction.reply(
+        "✅ مفيش غياب مسجل حاليًا."
+      );
+
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle("❌ قائمة الغياب")
+      .setDescription(
+        `📅 **${today}**\n\n` +
+        absentPlayers.join("\n")
+      )
       .setTimestamp();
 
     return interaction.reply({
       embeds: [embed]
     });
   }
+
 });
 
+// =========================
+// فحص الغياب
+// =========================
+
+function checkAbsence() {
+
+  const data = loadData();
+
+  const today = getEgyptDate();
+
+  let changed = false;
+
+  for (const [id, player] of Object.entries(data)) {
+
+    if (!player.attendance) {
+      player.attendance = [];
+    }
+
+    if (!player.warns) {
+      player.warns = [];
+    }
+
+    // =========================
+    // حساب آخر يوم حضور
+    // =========================
+
+    const lastAttendance =
+      player.lastAttendance;
+
+    if (!lastAttendance) continue;
+
+    // تحويل التاريخ
+    const last = new Date(
+      `${lastAttendance}T00:00:00+03:00`
+    );
+
+    const now = new Date(
+      `${today}T00:00:00+03:00`
+    );
+
+    const difference =
+      Math.floor(
+        (now - last) /
+        (1000 * 60 * 60 * 24)
+      );
+
+    // =========================
+    // يومين غياب
+    // =========================
+
+    if (difference >= 2) {
+
+      const alreadyWarned =
+        player.warns.some(
+          warn =>
+            warn.reason ===
+              "الغياب يومين متتاليين" &&
+            warn.date === today
+        );
+
+      if (!alreadyWarned) {
+
+        player.warns.push({
+          reason: "الغياب يومين متتاليين",
+          date: today,
+          automatic: true
+        });
+
+        changed = true;
+
+        sendAbsenceWarn(id);
+      }
+    }
+  }
+
+  // =========================
+  // بداية يوم جديد
+  // =========================
+
+  for (const player of Object.values(data)) {
+
+    if (player.lastReset !== today) {
+
+      player.presentToday = false;
+      player.lastReset = today;
+
+      changed = true;
+
+    }
+
+  }
+
+  if (changed) {
+    saveData(data);
+  }
+}
+
+// =========================
+// إرسال Warn
+// =========================
+
+async function sendAbsenceWarn(userId) {
+
+  try {
+
+    const channel =
+      await client.channels.fetch(
+        WARN_CHANNEL_ID
+      );
+
+    if (!channel) return;
+
+    const embed = new EmbedBuilder()
+      .setTitle("⚠️ Warn تلقائي")
+      .setDescription(
+        `<@${userId}> حصل على **Warn** بسبب الغياب يومين متتاليين.`
+      )
+      .setTimestamp();
+
+    await channel.send({
+      content: `<@${userId}>`,
+      embeds: [embed]
+    });
+
+  } catch (error) {
+
+    console.error(
+      "❌ فشل إرسال Warn:",
+      error
+    );
+
+  }
+}
+
+// =========================
+// تسجيل الدخول
+// =========================
+
 client.login(process.env.TOKEN);
+```
