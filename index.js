@@ -198,11 +198,12 @@ try {
   if (channel) {
     const embed = new EmbedBuilder()
       .setTitle("⚠️ تحذير جديد")
-      .setDescription(
-       "<@" + userId + ">\n\n" +
-        `📌 النوع: **${type === "task" ? "تاسك" : "غياب"}**\n` +
-        `🔢 التحذير: **${warnNumber}/3**\n` +
-        `📝 السبب: **${reason}**`
+     .setDescription(
+  "<@" + userId + ">\n\n" +
+  "📌 النوع: **" + (type === "task" ? "تاسك" : "غياب") + "**\n" +
+  "🔢 التحذير: **" + warnNumber + "/3**\n" +
+  "📝 السبب: **" + reason + "**"
+)
       )
       .setTimestamp();
 
